@@ -43,34 +43,68 @@ if "Continent" in df.columns:
     fig_continent.update_traces(textposition='inside', textinfo='percent+label')
     st.plotly_chart(fig_continent, use_container_width=True)
 
-# 2. Sports Industry Donut Chart
+# ✅ 2. Sports Industry Donut Chart (grouped small values into "Others")
 st.subheader("Sports Industry Employment")
+
+# Count categories
 industry_counts = {}
 for val in df["In Sports Industry"].dropna():
     for category in map(str.strip, val.split(",")):
         industry_counts[category] = industry_counts.get(category, 0) + 1
 industry_df = pd.DataFrame(industry_counts.items(), columns=["Category", "Count"]).sort_values(by="Count", ascending=False)
-fig_industry = px.pie(industry_df, names="Category", values="Count", hole=0.5)
+
+# Group small values
+def group_small_categories(df, category_col, count_col="Count", threshold=1):
+    large_df = df[df[count_col] > threshold]
+    small_df = df[df[count_col] <= threshold]
+
+    if not small_df.empty:
+        others_sum = small_df[count_col].sum()
+        others_row = pd.DataFrame([{category_col: "Others", count_col: others_sum}])
+        grouped_df = pd.concat([large_df, others_row], ignore_index=True)
+    else:
+        grouped_df = df.copy()
+
+    return grouped_df, small_df
+
+industry_df_grouped, industry_others = group_small_categories(industry_df, "Category", "Count", threshold=1)
+
+# Donut chart
+fig_industry = px.pie(industry_df_grouped, names="Category", values="Count", hole=0.5)
 fig_industry.update_traces(textposition='inside', textinfo='percent')
 st.plotly_chart(fig_industry, use_container_width=True)
 
-# 3. Job Title Category Bar Chart
-st.subheader("Job Titles by Sector")
-def categorize_job(title):
-    t = str(title).lower()
-    if "ministry" in t or "authority" in t or "government" in t: return "Government"
-    if "noc" in t or ("national" in t and "federation" in t): return "National Federation"
-    if "ioc" in t or "fifa" in t or "international federation" in t: return "International Federation"
-    if "university" in t or "professor" in t or "research" in t: return "Academia"
-    if "company" in t or "consulting" in t or "club" in t: return "Private Sector"
-    if "ngo" in t or "non-profit" in t: return "NGO"
-    if "self" in t or "entrepreneur" in t or "founder" in t: return "Self-Employed"
-    return "Other"
+# Others list
+if not industry_others.empty:
+    with st.expander("View items grouped into 'Others' (Count ≤ 1)"):
+        st.write(industry_others.sort_values("Category").reset_index(drop=True))
 
-job_df = df["Job Title"].dropna().apply(categorize_job)
-job_cat_counts = job_df.value_counts().reset_index()
-job_cat_counts.columns = ["Sector", "Count"]
-fig_job = px.bar(job_cat_counts, x="Count", y="Sector", orientation="h", text="Count")
+# 3. Job Titles by Reclassified Sector
+st.subheader("Job Titles by Reclassified Sector")
+
+job_df = df[['Job Title', 'Organization']].dropna(subset=['Job Title', 'Organization'])
+
+def classify_sector(job_title, organization):
+    text = f"{job_title} {organization}".lower()
+    if any(x in text for x in ["university", "research", "professor", "lecturer"]):
+        return "Academia"
+    elif any(x in text for x in ["ministry", "authority", "department", "municipality", "public"]):
+        return "Government"
+    elif any(x in text for x in ["federation", "association", "olympic", "committee", "noc"]):
+        if "international" in organization.lower():
+            return "International Federation"
+        return "National Federation"
+    elif any(x in text for x in ["ngo", "foundation", "non-profit", "charity", "relief"]):
+        return "NGO"
+    elif any(x in text for x in ["company", "consulting", "consultant", "agency", "firm", "marketing", "ltd", "inc", "club"]):
+        return "Private Sector"
+    else:
+        return "Other"
+
+job_df["Reclassified Sector"] = job_df.apply(lambda row: classify_sector(row["Job Title"], row["Organization"]), axis=1)
+sector_counts = job_df["Reclassified Sector"].value_counts().reset_index()
+sector_counts.columns = ["Sector", "Count"]
+fig_job = px.bar(sector_counts.sort_values("Count"), x="Count", y="Sector", orientation="h", text="Count")
 fig_job.update_layout(margin=dict(l=10, r=10, t=30, b=10))
 fig_job.update_traces(textposition='outside')
 st.plotly_chart(fig_job, use_container_width=True)
